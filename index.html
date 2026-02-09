@@ -80,8 +80,54 @@
   .slide-count {
     font-size: 13px;
     color: #888;
-    margin-left: auto;
     white-space: nowrap;
+  }
+  .export-btn {
+    margin-left: auto;
+    padding: 6px 16px;
+    border-radius: 20px;
+    border: 1px solid #f5a623;
+    background: transparent;
+    color: #f5a623;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .export-btn:hover { background: #f5a623; color: #000; }
+  .export-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .export-btn:disabled:hover { background: transparent; color: #f5a623; }
+  .export-progress {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 400;
+    background: rgba(0,0,0,0.85);
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .export-progress.open { display: flex; }
+  .export-progress-text {
+    color: #f5a623;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .export-progress-bar {
+    width: 300px;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .export-progress-fill {
+    height: 100%;
+    background: #f5a623;
+    border-radius: 3px;
+    transition: width 0.2s;
+    width: 0%;
   }
 
   /* ─── SOURCE FILTER BAR ─── */
@@ -485,6 +531,7 @@
     <button class="filter-btn" data-filter="tagged">&#127991; Tagged</button>
     <button class="filter-btn" data-filter="untagged">Untagged</button>
   </div>
+  <button class="export-btn" id="exportBtn" title="Export visible slides to PDF">&#128196; Export PDF</button>
   <span class="slide-count" id="slideCount">327 slides</span>
 </div>
 
@@ -541,6 +588,13 @@
   </div>
 </div>
 
+<!-- Export progress overlay -->
+<div class="export-progress" id="exportProgress">
+  <div class="export-progress-text" id="exportText">Preparing PDF...</div>
+  <div class="export-progress-bar"><div class="export-progress-fill" id="exportFill"></div></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 <script>
 (function() {
   let slideData = window.__SLIDE_DATA__ || [];
@@ -608,6 +662,10 @@
   const confirmMsg = document.getElementById('confirmMsg');
   const confirmYes = document.getElementById('confirmYes');
   const confirmCancel = document.getElementById('confirmCancel');
+  const exportBtn = document.getElementById('exportBtn');
+  const exportProgress = document.getElementById('exportProgress');
+  const exportText = document.getElementById('exportText');
+  const exportFill = document.getElementById('exportFill');
 
   // ─── INIT ───
   function init() {
@@ -924,6 +982,75 @@
       }
     }
   });
+
+  // ─── EXPORT PDF ───
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  async function exportPDF() {
+    if (filteredSlides.length === 0) return;
+
+    exportBtn.disabled = true;
+    exportProgress.classList.add('open');
+    exportText.textContent = `Loading 0 / ${filteredSlides.length} slides...`;
+    exportFill.style.width = '0%';
+
+    try {
+      const { jsPDF } = window.jspdf;
+      let pdf = null;
+
+      for (let i = 0; i < filteredSlides.length; i++) {
+        const page = filteredSlides[i];
+        const src = `slides/${String(page).padStart(3, '0')}.jpg`;
+
+        exportText.textContent = `Loading ${i + 1} / ${filteredSlides.length} slides...`;
+        exportFill.style.width = `${((i + 1) / filteredSlides.length * 100).toFixed(0)}%`;
+
+        // Force a repaint so progress updates
+        await new Promise(r => setTimeout(r, 10));
+
+        const img = await loadImage(src);
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        const isLandscape = w > h;
+        const orientation = isLandscape ? 'landscape' : 'portrait';
+
+        if (i === 0) {
+          pdf = new jsPDF({ orientation, unit: 'px', format: [w, h] });
+        } else {
+          pdf.addPage([w, h], orientation);
+        }
+
+        pdf.addImage(img, 'JPEG', 0, 0, w, h);
+      }
+
+      exportText.textContent = 'Generating PDF...';
+      await new Promise(r => setTimeout(r, 50));
+
+      // Build filename from active filters
+      let name = 'slides';
+      if (activeSource !== 'all') name = activeSource.replace(/\s+/g, '-');
+      if (activeFilter === 'starred') name += '-starred';
+      if (activeTag) name += '-' + activeTag;
+
+      pdf.save(`${name}.pdf`);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      alert('PDF export failed: ' + err.message);
+    } finally {
+      exportProgress.classList.remove('open');
+      exportBtn.disabled = false;
+    }
+  }
+
+  exportBtn.addEventListener('click', exportPDF);
 
   function esc(s) {
     const d = document.createElement('div');
